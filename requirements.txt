@@ -1,0 +1,11 @@
+fastapi
+pydantic
+transformers
+huggingface_hub
+accelerate
+torch
+fastapi-cache2
+redis
+uvicorn
+python-dotenv
+bitsandbytes

@@ -1,0 +1,71 @@
+
+image: docker:20.10.16
+
+services:
+  - docker:20.10.16-dind
+
+variables:
+  DOCKER_HOST: unix:///var/run/docker.sock
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_DRIVER: overlay2
+  IMAGE_NAME: "nubytes-llm-application-backup"
+  LATEST_TAG: "latest"
+  SSH_PRIVATE_KEY: "$SSH_PRIVATE_KEY"
+  SERVER_USER: "nubytes"
+  SERVER_IP: "195.242.24.89"
+
+stages:
+  - build
+  - deploy
+  - cleanup
+
+before_script:
+  - echo "Installing requirements..."
+  - apk add --update --no-cache openssh-client
+  - eval $(ssh-agent -s)
+  - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+  - mkdir -p ~/.ssh
+  - chmod 700 ~/.ssh
+  - ssh-keyscan -H $SERVER_IP >> ~/.ssh/known_hosts
+  - chmod 644 ~/.ssh/known_hosts
+
+build:
+  stage: build
+  services:
+    - docker:20.10.16-dind
+  script:
+    - echo "Building the Docker image locally..."
+    - docker build -t $IMAGE_NAME:$LATEST_TAG .
+  tags:
+    - nebius
+    - docker
+  only:
+    - staging
+
+deploy:
+  stage: deploy
+  script:
+    - echo "Deploying to Nebius server..."
+    - echo "Stopping and removing existing container if it exists..."
+    - ssh -v -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker container rm -f nubytes-llm-application-backup || true"
+    - echo "Transferring Docker image to Nebius server..."
+    - docker save $IMAGE_NAME:$LATEST_TAG | ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker load"
+    - echo "Running the container on Nebius server..."
+    - ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker run -d -p 8000:8000 --runtime nvidia --gpus all --name nubytes-llm-application-backup $IMAGE_NAME:$LATEST_TAG"
+  tags:
+    - nebius
+    - docker
+  only:
+    - staging
+
+cleanup:
+  stage: cleanup
+  script:
+    - echo "Cleaning up Docker resources on Nebius server..."
+    - ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker system prune -af --volumes"
+    - ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker volume prune --force"
+  tags:
+    - nebius
+    - docker
+  only:
+    - staging
